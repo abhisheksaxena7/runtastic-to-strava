@@ -9,3 +9,5 @@ node_modules/
 
 # Your personal GPS data folder (CRITICAL: Keeps your location history private)
 runtastic_export/
+successfully_imported/
+output/
