@@ -12,7 +12,7 @@ const OUTPUT_PATH = './output';
 const REPORT_FILE = path.join(OUTPUT_PATH, 'report.md');
 const UPLOAD_ENDPOINT = 'https://www.strava.com/api/v3/uploads';
 
-// Set how many files to process in this run (1 for test, 500 for full batch)
+// Set how many files to process in this run (e.g., 500 for full batch)
 const MAX_FILES_TO_PROCESS = 500;
 
 // Sleep function to manage rate limits
@@ -23,15 +23,18 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   if (!fs.existsSync(dir)) fs.mkdirSync(dir);
 });
 
-// 2. Cumulative Reporting Logic: Create header or add session separator
+// 2. Fixed Markdown Table Logic: Ensures closing pipes and headers for proper rendering
+const TABLE_HEADER = '| GPX File | Runtastic Type | Strava Name & Link | Strava Type |\n| :--- | :--- | :--- | :--- |\n';
+
 if (!fs.existsSync(REPORT_FILE)) {
-  const reportHeader = `# Strava Migration Report\nGenerated on: ${new Date().toLocaleString()}\n\n| GPX File | Runtastic Type | Strava Name & Link | Strava Type |\n| :--- | :--- | :--- | :--- |\n`;
+  const reportHeader = `# Strava Migration Report\nGenerated on: ${new Date().toLocaleString()}\n\n${TABLE_HEADER}`;
   fs.writeFileSync(REPORT_FILE, reportHeader);
 } else {
-  fs.appendFileSync(REPORT_FILE, `\n\n### New Session: ${new Date().toLocaleString()}\n`);
+  const newSessionHeader = `\n\n### New Session: ${new Date().toLocaleString()}\n\n${TABLE_HEADER}`;
+  fs.appendFileSync(REPORT_FILE, newSessionHeader);
 }
 
-// Helper to determine Activity Type, Time of Day, and Strava-specific sport mapping
+// Helper for Activity Type, Time of Day, and Sport mapping
 function getFileInfo(file, filePath) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
@@ -143,7 +146,7 @@ async function uploadToStrava() {
       let hasError = postResponse.data.error;
 
       while (!activityId && !hasError && uploadStatus !== 'Your activity is ready.') {
-        await sleep(2000);
+        await sleep(7500); // Throttled to 7.5 seconds to save API requests
         const checkResponse = await axios.get(`${UPLOAD_ENDPOINT}/${uploadId}`, {
           headers: { 'Authorization': `Bearer ${ACCESS_TOKEN}` }
         });
@@ -165,13 +168,21 @@ async function uploadToStrava() {
       fs.renameSync(filePath, successFilePath);
       console.log(`File Move:  Moved to /successfully_imported`);
 
-      // Append row to report
+      // Fixed Table Formatting with closing pipes
       const reportLine = `| ${file} | ${info.rawType} | [${info.displayName}](${stravaLink}) | ${info.stravaType} |\n`;
       fs.appendFileSync(REPORT_FILE, reportLine);
 
       successCount++;
     } catch (error) {
       console.log(`Result:     ❌ FAILED`);
+
+      // Stop the script immediately if we hit a rate limit
+      if (error.response && error.response.status === 429) {
+        console.log(`\n🚨 RATE LIMIT REACHED (429). Stopping session to protect server.`);
+        console.log(`Total Success this batch: ${successCount}`);
+        process.exit(1);
+      }
+
       console.error(`Details:   `, error.response ? JSON.stringify(error.response.data) : error.message);
       failureCount++;
     }
@@ -184,7 +195,7 @@ async function uploadToStrava() {
 
   console.log(`\n==================================================`);
   console.log(`MIGRATION BATCH COMPLETE`);
-  console.log(`Total Processed: ${filesToProcess.length}`);
+  console.log(`Total Processed: ${successCount + failureCount}`);
   console.log(`Successful:      ${successCount}`);
   console.log(`Failed:          ${failureCount}`);
   console.log(`Master Report:   ${REPORT_FILE}`);
