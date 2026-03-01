@@ -1,0 +1,26 @@
+{
+  "name": "runtastic-to-strava",
+  "version": "1.0.0",
+  "description": "A Node.js script to bulk upload `.gpx` files (like a Runtastic/Adidas Running export) to Strava, bypassing the manual web uploader limits.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abhisheksaxena7/runtastic-to-strava.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/abhisheksaxena7/runtastic-to-strava/issues"
+  },
+  "homepage": "https://github.com/abhisheksaxena7/runtastic-to-strava#readme",
+  "dependencies": {
+    "axios": "^1.13.6",
+    "dotenv": "^17.3.1",
+    "form-data": "^4.0.5"
+  }
+}

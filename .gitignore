@@ -1,0 +1,11 @@
+# Dependency directories
+node_modules/
+
+# Mac system files
+.DS_Store
+
+# Hidden environment variables (CRITICAL: Keeps your Strava token safe)
+.env
+
+# Your personal GPS data folder (CRITICAL: Keeps your location history private)
+runtastic_export/
