@@ -9,14 +9,13 @@ const ACCESS_TOKEN = process.env.STRAVA_ACCESS_TOKEN;
 const DIR_PATH = './runtastic_export';
 const UPLOAD_ENDPOINT = 'https://www.strava.com/api/v3/uploads';
 
-// Set how many files to process in this run (e.g., 1 for testing, or 500 for the full batch)
+// Set how many files to process in this run
 const MAX_FILES_TO_PROCESS = 1;
 
-// Sleep function to manage rate limits (1 request every 5 seconds)
+// Sleep function to manage rate limits
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function uploadToStrava() {
-  // Read the directory and filter only for .gpx files
   let files = fs.readdirSync(DIR_PATH).filter(file => file.endsWith('.gpx'));
 
   if (files.length === 0) {
@@ -25,48 +24,92 @@ async function uploadToStrava() {
   }
 
   // Sort files in reverse chronological order (newest first)
-  // String comparison works perfectly here because of the YYYY-MM-DD naming convention
   files.sort((a, b) => b.localeCompare(a));
 
-  // Limit the array to the specified constant
   const filesToProcess = files.slice(0, MAX_FILES_TO_PROCESS);
 
-  console.log(`Found ${files.length} total GPX files. Attempting to upload the newest ${filesToProcess.length}...`);
+  console.log(`\n==================================================`);
+  console.log(`STRAVA BULK UPLOAD STARTED`);
+  console.log(`Found ${files.length} total GPX files.`);
+  console.log(`Attempting to upload the newest ${filesToProcess.length} files...`);
+  console.log(`==================================================\n`);
+
+  let successCount = 0;
+  let failureCount = 0;
 
   for (let i = 0; i < filesToProcess.length; i++) {
     const file = filesToProcess[i];
     const filePath = path.join(DIR_PATH, file);
+    const currentFileNum = i + 1;
+    const totalFiles = filesToProcess.length;
+    const remainingFiles = totalFiles - currentFileNum;
 
-    // Construct the multipart/form-data payload
+    console.log(`--------------------------------------------------`);
+    console.log(`Processing File [${currentFileNum} of ${totalFiles}] - ${remainingFiles} remaining`);
+    console.log(`File Name: ${file}`);
+
     const form = new FormData();
     form.append('data_type', 'gpx');
     form.append('file', fs.createReadStream(filePath));
 
-    // Cleaning up the name slightly for the Strava feed
-    const dateString = file.substring(0, 10); // Extracts the YYYY-MM-DD
-    form.append('name', `Runtastic Run - ${dateString}`);
+    const dateString = file.substring(0, 10);
+    form.append('name', `RR - ${dateString}`);
     form.append('description', 'Imported via Node.js script');
 
     try {
-      console.log(`[${i + 1}/${filesToProcess.length}] Uploading ${file}...`);
-      const response = await axios.post(UPLOAD_ENDPOINT, form, {
+      console.log(`Status:    Uploading to Strava...`);
+      const postResponse = await axios.post(UPLOAD_ENDPOINT, form, {
         headers: {
           ...form.getHeaders(),
           'Authorization': `Bearer ${ACCESS_TOKEN}`
         }
       });
-      console.log(`  -> Success! Strava Upload ID: ${response.data.id}`);
+
+      const uploadId = postResponse.data.id;
+      console.log(`Status:    File accepted (Upload ID: ${uploadId}). Processing...`);
+
+      // Polling loop to wait for Strava to finish processing and generate the link
+      let activityId = postResponse.data.activity_id;
+      let uploadStatus = postResponse.data.status;
+      let hasError = postResponse.data.error;
+
+      while (!activityId && !hasError && uploadStatus !== 'Your activity is ready.') {
+        await sleep(2000); // Poll every 2 seconds
+        const checkResponse = await axios.get(`${UPLOAD_ENDPOINT}/${uploadId}`, {
+          headers: { 'Authorization': `Bearer ${ACCESS_TOKEN}` }
+        });
+
+        activityId = checkResponse.data.activity_id;
+        uploadStatus = checkResponse.data.status;
+        hasError = checkResponse.data.error;
+      }
+
+      if (hasError) {
+        throw new Error(`Strava processing error: ${hasError}`);
+      }
+
+      console.log(`Result:    ✅ SUCCESS`);
+      console.log(`Link:      https://www.strava.com/activities/${activityId}`);
+      successCount++;
     } catch (error) {
-      console.error(`  -> Failed to upload ${file}:`, error.response ? error.response.data : error.message);
+      console.log(`Result:    ❌ FAILED`);
+      console.error(`Details:  `, error.response ? JSON.stringify(error.response.data) : error.message);
+      failureCount++;
     }
 
     // Wait 5 seconds between requests (skip sleep on the very last file)
     if (i < filesToProcess.length - 1) {
+      console.log(`Action:    Waiting 5 seconds for rate limit...`);
       await sleep(5000);
     }
   }
 
-  console.log('Batch complete! Check your Strava feed.');
+  console.log(`\n==================================================`);
+  console.log(`MIGRATION BATCH COMPLETE`);
+  console.log(`Total Processed: ${filesToProcess.length}`);
+  console.log(`Successful:      ${successCount}`);
+  console.log(`Failed:          ${failureCount}`);
+  console.log(`==================================================\n`);
 }
 
 uploadToStrava();
