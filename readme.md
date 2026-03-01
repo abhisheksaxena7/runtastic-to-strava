@@ -1,109 +1,167 @@
-# Strava Bulk Uploader
+# Runtastic to Strava Bulk Uploader
 
-A Node.js script to bulk upload `.gpx` files (like a Runtastic/Adidas Running export) to Strava, bypassing the manual web uploader limits.
+A specialized Node.js utility designed to migrate your entire activity history from Runtastic (Adidas Running) to Strava. This tool bypasses manual upload limits and correctly maps activity types (strolling → walk, cycling → ride).
 
-## Prerequisites: Getting Your Access Token
+## 🚀 Key Features
 
-By default, Strava API tokens are read-only. To upload files, you need to generate a token with `activity:write` permissions. Here is how to do it:
+- **Smart activity mapping**: Automatically translates Runtastic's internal labels (`strolling`, `running`, `cycling`) to the correct Strava API types.
+- **Rate-limit protection**: Implements a dual-layer throttle (5-second pause between uploads and a 7.5-second status polling interval) to respect Strava's API quotas.
+- **Resumable progress**: Successfully uploaded files are moved to a `successfully_imported` folder. If the script stops, it picks up exactly where it left off.
+- **Session reporting**: Generates a cumulative Markdown report in `/output/report.md` with links to every imported activity on Strava.
+- **Time-zone correction**: Uses GPS longitude data to calculate the local time of day for activity naming (e.g., "Afternoon Walk").
 
-### Step 1: Create a Strava API Application
+---
 
-1. Go to your [Strava API Settings](https://www.strava.com/settings/api).
-2. Fill out the form to create a new app. The exact details don't matter much, EXCEPT:
-   - **Authorization Callback Domain:** You MUST enter `localhost` here.
-3. Click Create.
-4. On the next page, take note of your **Client ID** and **Client Secret**.
+<details>
+<summary><strong>🛠️ Setup & Installation</strong></summary>
 
-### Step 2: Authorize the App
+<br>
 
-You need to explicitly grant your new app permission to upload data to your account.
+#### 0. Export your data from Adidas Running
 
-1. Copy the following URL, replace `[YOUR_CLIENT_ID]` with your actual Client ID, and paste it into your browser:
-   `http://www.strava.com/oauth/authorize?client_id=[YOUR_CLIENT_ID]&response_type=code&redirect_uri=http://localhost/exchange_token&approval_prompt=force&scope=activity:write`
-2. Click **Authorize** on the Strava page that appears.
-3. Your browser will redirect to a broken `localhost` page (e.g., "This site can't be reached"). This is expected!
-4. Look at the URL in your browser's address bar. It will look like this:
-   `http://localhost/exchange_token?state=&code=YOUR_AUTHORIZATION_CODE&scope=read,activity:write`
-5. Copy the exact string of characters that comes right after `code=` and before `&scope`. This is your Authorization Code.
+1. Log in to the Adidas Running web portal (`https://www.runtastic.com`) using your account.
+2. Go to **Settings → Account & Data**.
+3. In the **Export Data** section, click **Export Data** and confirm the request.
+4. Wait for the email with your download link (this can take anywhere from a few hours to a couple of days).
+5. Download the `.zip` archive to your computer.
+6. Unzip the archive and navigate to `Sport-sessions/GPS-data`.
+7. Copy all `.gpx` files from `GPS-data` into a folder named `runtastic_export` in the root of this project.
 
-### Step 3: Exchange the Code for an Access Token
-
-Now, trade that code for your final write-access token using your terminal.
-
-Run this `curl` command, replacing the bracketed values with your own:
+#### 1. Clone & install dependencies
 
 ```bash
-curl -X POST [https://www.strava.com/oauth/token](https://www.strava.com/oauth/token) \
+git clone https://github.com/abhisheksaxena7/runtastic-to-strava.git
+cd runtastic-to-strava
+npm install
+```
+
+#### 2. Configure your Strava API token
+
+You need a Strava token with `activity:write` permissions so the script can create activities on your behalf.
+
+##### a. Create a Strava API application
+
+1. Log in and open your [Strava API settings](https://www.strava.com/settings/api).
+2. Fill out the form to create a new app:
+
+   - **Application Name:** e.g. "Runtastic Migrator".
+   - **Category:** "Visualizer" or "Other".
+   - **Website:** `http://localhost`
+   - **Authorization Callback Domain:** `localhost` (required).
+
+3. Click **Create**. Note your **Client ID** and **Client Secret**.
+
+##### b. Authorize the app for write access
+
+Standard tokens only let you _read_ data; you must explicitly request permission to _upload_ it.
+
+1. Copy the URL below and replace `[YOUR_CLIENT_ID]` with the actual ID from your Strava settings:
+
+   `http://www.strava.com/oauth/authorize?client_id=[YOUR_CLIENT_ID]&response_type=code&redirect_uri=http://localhost/exchange_token&approval_prompt=force&scope=activity:write`
+
+2. Paste the modified URL into your browser and click **Authorize**.
+3. Your browser will redirect to a page that looks like an error (e.g., "Site cannot be reached") on `localhost`. This is expected.
+4. Look at the **URL bar**. It will look similar to:
+
+   `http://localhost/exchange_token?state=&code=ABC123XYZ...&scope=read,activity:write`
+
+5. Copy everything between `code=` and `&scope`. This is your **authorization code**.
+
+##### c. Exchange the code for an access token
+
+The authorization code is temporary. Exchange it for a final access token using your terminal:
+
+```bash
+curl -X POST https://www.strava.com/oauth/token \
   -F client_id=[YOUR_CLIENT_ID] \
   -F client_secret=[YOUR_CLIENT_SECRET] \
   -F code=[YOUR_AUTHORIZATION_CODE] \
   -F grant_type=authorization_code
 ```
 
-## Step 4: Installation & Setup
+The response will be a JSON block. Look for the value labeled `"access_token"`.
 
-Since this repository already contains the Node.js project, you just need to clone it and install the required dependencies.
+##### d. Save the token to your `.env` file
 
-1. Clone the repository to your local machine:
+1. In your project folder, create a file named `.env` (if it doesn't already exist).
+2. Add your token value:
 
    ```bash
-   git clone [https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git](https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git)
-   cd YOUR_REPO_NAME
+   STRAVA_ACCESS_TOKEN=your_token_string_here
    ```
 
-2. Install the necessary packages (axios, form-data, and dotenv):
-   ```bash
-   npm install
-   ```
+The `upload.js` script looks for this exact variable name (`STRAVA_ACCESS_TOKEN`) to authenticate your requests.
 
-## Step 5: Secure Your Access Token
+#### 3. Prepare your data folder
 
-It is crucial to keep your access token safe. This project uses a `.env` file to securely load your credentials without hardcoding them into the script.
+Place all exported `.gpx` files from your Runtastic archive into the `runtastic_export` folder in the root of this project.
 
-1. Create a file named `.env` in the root directory of the project.
-2. Paste your access token inside exactly like this (no quotes needed):
-   ```env
-   STRAVA_ACCESS_TOKEN=your_access_token_here
-   ```
+</details>
 
-Here is the exact Markdown for Steps 5, 6, 7, and the rate limit warning, ready for you to copy and paste directly into your `README.md`:
+---
 
-````markdown
-## Step 5: Secure Your Access Token
+<details>
+<summary><strong>📖 Usage Guide</strong></summary>
 
-It is crucial to keep your access token safe. This project uses a `.env` file to securely load your credentials without hardcoding them into the script.
+<br>
 
-1. Create a file named `.env` in the root directory of the project.
-2. Paste your access token inside exactly like this (no quotes needed):
-   ```env
-   STRAVA_ACCESS_TOKEN=your_access_token_here
-   ```
-````
+### Phase 1: Scan your data
 
-_(Note: The provided `.gitignore` file ensures your `.env` file will never be accidentally committed back to GitHub)._
+Before uploading, run the scanner to verify your file count and activity types:
 
-## Step 6: Prepare Your GPX Data
+```bash
+node scan.js
+```
 
-1. Create a folder named `runtastic_export` in the root directory of this project.
-2. Extract all of your `.gpx` files from your Runtastic/Adidas Running archive and place them inside this folder.
-   _(Note: The `.gitignore` file also prevents your personal GPS data from being pushed to the repository)._
+This prints a summary table showing how many runs, walks, and rides were detected.
 
-## Step 7: Run the Migration
+### Phase 2: Bulk upload
 
-Once your `.env` file is saved and your `.gpx` files are sitting in the `runtastic_export` folder, you are ready to start the upload process.
-
-Run the following command in your terminal:
+Start the migration process:
 
 ```bash
 node upload.js
-
 ```
 
-## ⚠️ Important: Strava API Rate Limits
+The script will:
 
-Strava enforces strict rate limits on their API to prevent server overload:
+- Process your newest activities first.
+- Move successfully uploaded files to the `successfully_imported` folder.
+- Log each upload (with Strava links) to `output/report.md`.
 
-- **200 requests every 15 minutes**
-- **2,000 requests per day**
+</details>
 
-The `upload.js` script handles this automatically. It includes a built-in 5-second delay between each upload request, safely pacing the uploads at 12 per minute. This keeps you well below the 15-minute threshold and ensures a smooth, uninterrupted migration without hitting a 429 "Too Many Requests" error.
+---
+
+<details>
+<summary><strong>⚠️ Rate Limits & Safety</strong></summary>
+
+<br>
+
+Strava enforces strict limits on their API:
+
+- **15-minute limit**: 200 requests.
+- **Daily limit**: 2,000 requests.
+
+**Safety measures in this script:**
+
+- **Fail-graceful**: If a `429 Too Many Requests` error is encountered, the script immediately stops to protect your API standing.
+- **Throttling**: The script is paced to process ~12 files per 15-minute window, staying safely under the short-term threshold.
+
+</details>
+
+---
+
+<details>
+<summary><strong>📂 Project Structure</strong></summary>
+
+<br>
+
+- `upload.js`: Main migration engine with upload and polling logic.
+- `scan.js`: Utility to analyze your GPX export folder.
+- `runtastic_export/`: Source folder for GPX files you want to import.
+- `successfully_imported/`: Target folder for files after a successful upload.
+- `output/report.md`: Cumulative log of all migrated activities.
+
+</details>
+
